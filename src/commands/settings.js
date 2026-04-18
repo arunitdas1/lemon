@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { getGuildSettings, upsertGuildSettings } = require('../db');
 const { buildMusicEmbed } = require('../ui');
+const { assertGuildInteraction, assertManageGuild } = require('../guards');
 
 const validOptions = ['embed_color', 'footer_text', 'ui_style', 'stay_in_voice'];
 
@@ -25,6 +26,7 @@ module.exports = {
         )
     ),
   async execute(interaction) {
+    assertGuildInteraction(interaction);
     const subcommand = interaction.options.getSubcommand();
 
     if (subcommand === 'view') {
@@ -37,6 +39,8 @@ module.exports = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+
+    assertManageGuild(interaction);
 
     const option = interaction.options.getString('option', true);
     const value = interaction.options.getString('value', true);
@@ -51,7 +55,7 @@ module.exports = {
     }
 
     if (option === 'footer_text') {
-      updates.footerText = value.slice(0, 120);
+      updates.footerText = value.trim().slice(0, 120);
     }
 
     if (option === 'ui_style') {

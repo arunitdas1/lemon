@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require('discord.js');
 const music = require('../music/musicManager');
 const { getGuildSettings } = require('../db');
 const { buildMusicEmbed, buildControlButtons } = require('../ui');
+const { assertGuildInteraction, assertUserInVoice, assertSameVoiceAsBot } = require('../guards');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -11,6 +12,10 @@ module.exports = {
       option.setName('query').setDescription('URL or song search query').setRequired(true)
     ),
   async execute(interaction) {
+    assertGuildInteraction(interaction);
+    assertUserInVoice(interaction);
+    assertSameVoiceAsBot(interaction);
+
     await interaction.deferReply();
     const query = interaction.options.getString('query', true);
 

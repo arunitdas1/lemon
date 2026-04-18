@@ -3,6 +3,7 @@ const {
   createAudioPlayer,
   createAudioResource,
   AudioPlayerStatus,
+  AudioPlayerError,
   VoiceConnectionStatus,
   entersState
 } = require('@discordjs/voice');
@@ -15,13 +16,31 @@ class MusicManager {
 
   getQueue(guildId) {
     if (!this.queues.has(guildId)) {
-      this.queues.set(guildId, {
+      const player = createAudioPlayer();
+      const queue = {
         tracks: [],
         connection: null,
-        player: createAudioPlayer(),
+        player,
         textChannelId: null,
-        nowPlaying: null
+        nowPlaying: null,
+        isAdvancing: false
+      };
+
+      player.on(AudioPlayerStatus.Idle, () => {
+        this.playNext(guildId).catch((error) => {
+          console.error(`Failed while advancing queue for guild ${guildId}:`, error);
+        });
       });
+
+      player.on(AudioPlayerError, (error) => {
+        console.error(`Playback error for guild ${guildId}:`, error.message);
+        queue.nowPlaying = null;
+        this.playNext(guildId).catch((nextError) => {
+          console.error(`Failed to recover after playback error for guild ${guildId}:`, nextError);
+        });
+      });
+
+      this.queues.set(guildId, queue);
     }
 
     return this.queues.get(guildId);
@@ -36,15 +55,20 @@ class MusicManager {
     const queue = this.getQueue(interaction.guildId);
     queue.textChannelId = interaction.channelId;
 
+    const existingChannelId = queue.connection?.joinConfig?.channelId;
+    if (existingChannelId && existingChannelId !== memberChannel.id) {
+      throw new Error('Join the same voice channel as the bot to control playback.');
+    }
+
     if (!queue.connection) {
       queue.connection = joinVoiceChannel({
         channelId: memberChannel.id,
         guildId: interaction.guildId,
-        adapterCreator: interaction.guild.voiceAdapterCreator
+        adapterCreator: interaction.guild.voiceAdapterCreator,
+        selfDeaf: true
       });
 
       queue.connection.subscribe(queue.player);
-      queue.player.on(AudioPlayerStatus.Idle, () => this.playNext(interaction.guildId));
 
       try {
         await entersState(queue.connection, VoiceConnectionStatus.Ready, 15_000);
@@ -59,11 +83,16 @@ class MusicManager {
   }
 
   async enqueue(interaction, query) {
+    const safeQuery = query.trim();
+    if (!safeQuery || safeQuery.length > 200) {
+      throw new Error('Query must be between 1 and 200 characters.');
+    }
+
     const queue = await this.connect(interaction);
 
-    let url = query;
-    if (!play.yt_validate(query)) {
-      const searchResults = await play.search(query, { limit: 1 });
+    let url = safeQuery;
+    if (!play.yt_validate(safeQuery)) {
+      const searchResults = await play.search(safeQuery, { limit: 1 });
       if (!searchResults.length) {
         throw new Error('No track found for that query.');
       }
@@ -89,18 +118,25 @@ class MusicManager {
 
   async playNext(guildId) {
     const queue = this.getQueue(guildId);
-    const next = queue.tracks.shift();
+    if (queue.isAdvancing) return;
 
-    if (!next) {
-      queue.nowPlaying = null;
-      return;
+    queue.isAdvancing = true;
+    try {
+      const next = queue.tracks.shift();
+
+      if (!next) {
+        queue.nowPlaying = null;
+        return;
+      }
+
+      queue.nowPlaying = next;
+
+      const stream = await play.stream(next.url, { quality: 2 });
+      const resource = createAudioResource(stream.stream, { inputType: stream.type });
+      queue.player.play(resource);
+    } finally {
+      queue.isAdvancing = false;
     }
-
-    queue.nowPlaying = next;
-
-    const stream = await play.stream(next.url, { quality: 2 });
-    const resource = createAudioResource(stream.stream, { inputType: stream.type });
-    queue.player.play(resource);
   }
 
   skip(guildId) {
@@ -135,6 +171,16 @@ class MusicManager {
       queue.connection.destroy();
       queue.connection = null;
     }
+  }
+
+  isConnected(guildId) {
+    const queue = this.getQueue(guildId);
+    return Boolean(queue.connection);
+  }
+
+  currentVoiceChannelId(guildId) {
+    const queue = this.getQueue(guildId);
+    return queue.connection?.joinConfig?.channelId || null;
   }
 
   snapshot(guildId) {

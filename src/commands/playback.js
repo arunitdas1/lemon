@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require('discord.js');
 const music = require('../music/musicManager');
 const { getGuildSettings } = require('../db');
 const { buildMusicEmbed } = require('../ui');
+const { assertGuildInteraction, assertUserInVoice, assertSameVoiceAsBot } = require('../guards');
 
 const actions = {
   skip: { title: 'Skipped', run: (guildId) => music.skip(guildId) },
@@ -14,6 +15,10 @@ function command(name) {
   return {
     data: new SlashCommandBuilder().setName(name).setDescription(`${name} playback.`),
     async execute(interaction) {
+      assertGuildInteraction(interaction);
+      assertUserInVoice(interaction);
+      assertSameVoiceAsBot(interaction);
+
       actions[name].run(interaction.guildId);
       const settings = await getGuildSettings(interaction.guildId);
       const embed = buildMusicEmbed(settings, actions[name].title, `Playback action: ${name}`);
