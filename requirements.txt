@@ -1,0 +1,2 @@
+# This project is implemented in Node.js.
+# Python dependencies are not required for runtime.
